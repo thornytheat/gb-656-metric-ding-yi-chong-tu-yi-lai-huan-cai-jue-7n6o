@@ -1,8 +1,8 @@
 # 深度登记 metricgraph
 
-- 规模：中型（7 个功能模块，76 个文件，65 条测试）
+- 规模：中型（8 个功能模块，108 个文件，114 条测试）
 - 核心规则：同名同版本指标先做表达式稳定签名，再按依赖图检测环并裁决生效版本。
-- 使用者与工作流：分析治理组在指标发布前复核定义冲突、缺依赖、依赖环与版本重叠。
+- 使用者与工作流：分析治理组在指标发布前复核定义冲突、缺依赖、依赖环与版本重叠；月底按生效日做迁移对账，签收后锁定历史口径。
 
 ## 功能模块
 
@@ -15,6 +15,7 @@
 | M5 影响面 | 看受影响的下游节点、环、断链、单边登记 | GET /api/impact | `app/modules/m5_impact/handler.py` `app/modules/m5_impact/service.py` `app/modules/m5_impact/closure.py` `app/modules/m5_impact/cycle.py` `app/modules/m5_impact/broken.py` | `tests/test_m5_impact.py` |
 | M6 版本批次 | 跑批次、看历史、验陈旧拒绝与区间重叠 | POST /api/runs | `app/modules/m6_batches/handler.py` `app/modules/m6_batches/service.py` `app/modules/m6_batches/window.py` `app/modules/m6_batches/guard.py` `app/modules/m6_batches/history.py` | `tests/test_m6_batches.py` |
 | M7 指标目录 | 导出一份定义、依赖与状态清单 | GET /api/export/catalog.csv | `app/modules/m7_migration/handler.py` `app/modules/m7_migration/service.py` `app/modules/m7_migration/csv_out.py` `app/modules/m7_migration/ledger.py` | `tests/test_m7_migration.py` |
+| M8 生效日复核 | 按生效日选批对账、签收锁定、按原批回查、更正差异 | GET /api/reconciliation/by-day | `app/modules/m8_reconcile/handler.py` `app/modules/m8_reconcile/service.py` `app/modules/m8_reconcile/point.py` `app/modules/m8_reconcile/correction.py` | `tests/test_m8_reconcile.py` |
 
 ## 陷阱登记
 
@@ -30,6 +31,8 @@
 | TRAP-22 | 同一字段被连续改过两次名 | 只认最近一跳，最早的名字解析不到 | 跨版本改名链一路解析到底 | `app/modules/m4_mapping/rename.py` | `tests/test_m4_mapping.py::test_trap22_alias_chain_resolves_multi_hop` |
 | TRAP-25 | 两个版本生效区间重叠 | 取到哪版看运气 | 半开区间比较，重叠直接标记警告 | `app/modules/m6_batches/window.py` | `tests/test_m6_batches.py::test_trap25_overlap_flagged_but_adjacent_clean` |
 | TRAP-26 | 基于旧版本号提交 | 后提交无条件覆盖新结果 | 版本号乐观锁，基线落后即 409 | `app/modules/m6_batches/guard.py` | `tests/test_m6_batches.py::test_trap26_stale_submission_rejected` |
+| TRAP-27 | 晚到更正与原批生效区间重叠 | 整段替换让已签收对账变样，或只认原批让复核沿用错数 | 选批纯规则：签收优先锁定，未签收取最新序号并列出被替换原批，缘由全部落原因码 | `app/modules/m8_reconcile/point.py` | `tests/test_m8_reconcile.py::test_overlapping_windows_latest_seq_wins` `tests/test_m8_reconcile.py::test_signoff_locks_original_batch_against_later_correction` |
+| TRAP-28 | 同一份更正反复重跑 | 批次表与复核记录不断膨胀，签收口径被新行冲掉 | 批次键内容寻址 + 复核/签收按 (生效日, 批次) UPSERT，重跑不新增行 | `app/store.py` `app/modules/m8_reconcile/service.py` | `tests/test_m8_reconcile.py::test_rerun_same_correction_reuses_batch_and_reconciliation` `tests/test_m8_reconcile.py::test_repeated_signoff_same_batch_updates_without_duplicate` |
 
 ## 对账规则
 
@@ -44,5 +47,6 @@
 - SQL 只认 `别名.列名`；无别名的裸列名、子查询、CTE、函数包裹的列都不抽。
 - DDL 只解析 `CREATE TABLE` 的列定义，不处理分区、约束、索引与 `ALTER`。
 - 类型格只覆盖数值、字符、时间、布尔四族；映射表、数组、结构体一律算 `unknown`，保守判破坏。
-- 生效区间重叠只标记不阻断，最终以版本序号为准。
+- 生效区间重叠在批次登记时只标记不阻断；生效日复核阶段按"签收优先、否则最新序号"裁决，当天采用哪批与缘由写入复核记录。
+- 签收不支持撤销与改签（一天签另一批直接 409 `SIGNOFF_CONFLICT`），如需翻转走人工评审并新建生效日。
 - 打印页脚用 `counter(page)`，Chrome 打印预览不渲染该计数。

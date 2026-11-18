@@ -56,7 +56,26 @@ CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reconciliations (
+    reconcile_id   TEXT NOT NULL,
+    effective_day  TEXT NOT NULL,
+    run_id         TEXT NOT NULL,
+    selection_json TEXT NOT NULL,
+    payload_json   TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    UNIQUE(effective_day, run_id)
+);
+CREATE TABLE IF NOT EXISTS signoffs (
+    reconcile_id   TEXT PRIMARY KEY,
+    effective_day  TEXT NOT NULL,
+    run_id         TEXT NOT NULL,
+    note           TEXT NOT NULL,
+    signed_at      TEXT NOT NULL,
+    payload_json   TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_quarantine_schema ON quarantine(schema_id);
+CREATE INDEX IF NOT EXISTS idx_recon_day ON reconciliations(effective_day);
+CREATE INDEX IF NOT EXISTS idx_signoff_day ON signoffs(effective_day);
 """
 
 
@@ -83,7 +102,8 @@ def reset() -> None:
     """测试与重建用：清空全部业务表。"""
     with _LOCK, _connect() as conn:
         conn.executescript(SCHEMA)
-        for table in ("snapshots", "runs", "quarantine", "kv"):
+        for table in ("snapshots", "runs", "quarantine", "kv",
+                      "reconciliations", "signoffs"):
             conn.execute(f"DELETE FROM {table}")
 
 
@@ -272,3 +292,115 @@ def get_kv(key: str, default=None):
     with _LOCK, _connect() as conn:
         row = conn.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
     return _loads(row["v"]) if row else default
+
+
+# ---------- 生效日选批 ----------
+
+def all_runs() -> list[dict]:
+    """按生效起点排序的全部批次，选批与复核都以这份清单为准。"""
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM runs ORDER BY effective_from, version_seq"
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]
+
+
+def save_reconciliation(record: dict) -> None:
+    """同一天同一批次的复核只留一行：重跑走 UPSERT，不重复登记。"""
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT INTO reconciliations (reconcile_id, effective_day, run_id,
+                   selection_json, payload_json, created_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(effective_day, run_id) DO UPDATE SET
+                   reconcile_id=excluded.reconcile_id,
+                   selection_json=excluded.selection_json,
+                   payload_json=excluded.payload_json,
+                   created_at=excluded.created_at""",
+            (
+                record["reconcile_id"], record["effective_day"], record["run_id"],
+                _dumps(record["selection"]), _dumps(record), record["created_at"],
+            ),
+        )
+
+
+def find_reconciliation(effective_day: str, run_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM reconciliations WHERE effective_day=? AND run_id=?",
+            (effective_day, run_id),
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def reconciliation_by_id(reconcile_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM reconciliations WHERE reconcile_id=? LIMIT 1",
+            (reconcile_id,),
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def list_reconciliations(limit: int = 50) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            """SELECT payload_json FROM reconciliations
+               ORDER BY effective_day DESC, created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]
+
+
+# ---------- 签收 ----------
+
+def save_signoff(record: dict) -> None:
+    """签收键就是复核键；重复签收更新备注与时间，但不换批次、不新增行。"""
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT INTO signoffs (reconcile_id, effective_day, run_id, note,
+                   signed_at, payload_json)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(reconcile_id) DO UPDATE SET
+                   note=excluded.note, signed_at=excluded.signed_at,
+                   payload_json=excluded.payload_json""",
+            (
+                record["reconcile_id"], record["effective_day"], record["run_id"],
+                record["note"], record["signed_at"], _dumps(record),
+            ),
+        )
+
+
+def signoff_by_id(reconcile_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM signoffs WHERE reconcile_id=?", (reconcile_id,)
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def signoff_for(effective_day: str, run_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM signoffs WHERE effective_day=? AND run_id=?",
+            (effective_day, run_id),
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def day_signoff(effective_day: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM signoffs WHERE effective_day=? LIMIT 1",
+            (effective_day,),
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def list_signoffs(limit: int = 50) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM signoffs ORDER BY signed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]

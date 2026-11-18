@@ -77,3 +77,13 @@
 - 列定义行 = 接受字段 + 阻断行
 
 每个字段只进一个桶，所以四个等式成立是必要条件；差额不为 0 即判定漏项。
+
+## 9 生效日复核与签收
+
+- 生效日按 UTC 零点解释；批次区间 `[effective_from, effective_to)` 覆盖该时刻才算候选，`effective_to` 为空视为无穷远。
+- 选批优先级：① 当天已有签收 → 永远返回签收批次（`WINDOW_SIGNED_OFF_LOCKED`）；② 否则在候选批次中取 `version_seq` 最大者，唯一候选记 `WINDOW_COVERS_DAY`，多候选记 `WINDOW_LATEST_WINS` 并把其余批次列入 `superseded`；③ 无候选记 `WINDOW_NO_COVERAGE`，接口返回 404。
+- `reconcile_id = "rc-" + sha256("生效日|run_id")[:12]`，同一 (生效日, 批次) 重跑得到同一标识，落库走 UPSERT。
+- 复核记录 (`reconciliations`) 保存选批缘由快照与当时的四账结果；签收记录 (`signoffs`) 以 `reconcile_id` 为主键，重复签收更新备注与时间，不换批次、不新增行。
+- 同一天签收第二个批次直接 409 `SIGNOFF_CONFLICT`；显式签收的原批次其区间必须仍覆盖签收日，否则 400 `WINDOW_NO_COVERAGE`。
+- 上游文件更新后输入摘要变化，重跑生成新批次与新兼容判定；未签收日期的复核自动采用新批次，判定差异以 `correction` 比对逐字段给出（`verdict_before/after`、`primary_reason`）。
+- 同一输入（文件摘要 + 区间 + 参数 + 规则集）的批次键不变，重跑命中已有批次 (`reused=true`)，批次表不增行。

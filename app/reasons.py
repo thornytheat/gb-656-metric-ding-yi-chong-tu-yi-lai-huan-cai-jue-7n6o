@@ -49,6 +49,15 @@ CODES: dict[str, tuple[str, str]] = {
     "VERSION_APPLIED": ("版本已登记", "info"),
     "RUN_REUSED": ("同一输入命中已算批次", "info"),
     "WINDOW_INVERTED": ("生效区间起点不早于终点", "break"),
+    # 生效日复核
+    "WINDOW_COVERS_DAY": ("生效区间覆盖当天", "info"),
+    "WINDOW_LATEST_WINS": ("重叠区间取最新批次", "warn"),
+    "WINDOW_SIGNED_OFF_LOCKED": ("已签收批次锁定", "warn"),
+    "WINDOW_SIGNED_OFF_QUERY": ("按已签收批次查询", "info"),
+    "WINDOW_CORRECTION_REPLACES": ("更正批次替换原批", "warn"),
+    "WINDOW_NO_COVERAGE": ("当天无生效批次", "break"),
+    "SIGNOFF_CONFLICT": ("当天已签收另一批次", "break"),
+    "RECON_REUSED": ("同一复核重跑未重复登记", "info"),
     # 结论
     "COMPATIBLE": ("兼容", "info"),
     "COMPATIBLE_BY_MAPPING": ("加别名后兼容", "warn"),

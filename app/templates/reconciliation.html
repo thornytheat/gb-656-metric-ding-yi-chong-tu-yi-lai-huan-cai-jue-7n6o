@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}生效日复核 · metricgraph{% endblock %}
+{% block body %}
+<section class="doc-section">
+  <h1>生效日复核</h1>
+  <p class="lede">按生效日查迁移对账：重叠区间由选批规则裁决，已签收对账锁定原批次。</p>
+  <div class="actions">
+    <label class="field-inline"><span class="field-label">生效日</span>
+      <input type="date" id="recon-day" value="2026-09-15">
+    </label>
+    <button type="button" class="btn btn-primary" data-action="reconcile-day">查当天对账</button>
+    <button type="button" class="btn" data-action="signed-lookup">查已签收</button>
+    <span class="flash" data-flash></span>
+  </div>
+
+  <div id="recon-result" class="panel" style="margin-top:14px; display:none;"></div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">1</span>签收台账</h2>
+  {% if overview.signoffs %}
+  <div class="wrap-scroll">
+    <table>
+      <thead>
+        <tr><th>生效日</th><th>签收批次</th><th class="num">序号</th><th>备注</th><th>签收时间</th><th>回查</th></tr>
+      </thead>
+      <tbody>
+        {% for item in overview.signoffs %}
+        <tr>
+          <td class="name mono">{{ item.effective_day }}</td>
+          <td class="name">{{ item.run_id }}</td>
+          <td class="num">{{ item.version_seq }}</td>
+          <td class="cell-note">{{ item.note or '—' }}</td>
+          <td class="name">{{ item.signed_at|day }}</td>
+          <td><a class="link mono" href="/api/reconciliation/signed/{{ item.effective_day }}?run_id={{ item.run_id }}">原批次 JSON</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">还没有签收记录。先在上方查一天，再签收当天采用的批次。</p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">2</span>复核记录</h2>
+  {% if overview.reconciliations %}
+  <div class="wrap-scroll">
+    <table>
+      <thead>
+        <tr><th>生效日</th><th>采用批次</th><th>选批缘由</th><th>签收</th><th>登记时间</th></tr>
+      </thead>
+      <tbody>
+        {% for item in overview.reconciliations %}
+        <tr>
+          <td class="name mono">{{ item.effective_day }}</td>
+          <td class="name">{{ item.run_id }}</td>
+          <td><span class="code">{{ item.selection.reason|reason }}</span>
+              <span class="cell-note">{{ item.selection.explanation }}</span></td>
+          <td>{% if item.signed_off %}<span class="st st-ok">已签收</span>{% else %}—{% endif %}</td>
+          <td class="name">{{ item.created_at|day }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">还没有复核记录。</p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">3</span>重叠批次（更正与原批）</h2>
+  {% if overview.overlaps %}
+  <table>
+    <thead><tr><th>原批次</th><th>更正批次</th><th>缘由</th><th>判定差异</th></tr></thead>
+    <tbody>
+      {% for pair in overview.overlaps %}
+      <tr>
+        <td class="name">{{ pair.original_run_id }}</td>
+        <td class="name">{{ pair.correction_run_id }}</td>
+        <td><span class="code">{{ pair.reason|reason }}</span></td>
+        <td><a class="link mono" href="/api/reconciliation/correction/{{ pair.original_run_id }}/{{ pair.correction_run_id }}">差异 JSON</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">当前批次区间互不重叠。</p>
+  {% endif %}
+</section>
+
+<aside class="notes">
+  <ol class="footnotes">
+    <li>区间左闭右开 <span class="mono">[start, end)</span>；多个批次覆盖同一天时取版本序号最大者。<a class="back" href="#main">↩</a></li>
+    <li>已签收的对账按原批次永久可查，后续更正批次不替换签收结果。<a class="back" href="#main">↩</a></li>
+    <li>同一天同一批次的复核与签收重跑走 UPSERT，不重复登记。<a class="back" href="#main">↩</a></li>
+  </ol>
+</aside>
+{% endblock %}
